@@ -1,4 +1,15 @@
 import { NextFunction, Request, Response } from "express";
+import mongoose from "mongoose";
+
+const userSchema = new mongoose.Schema({
+  firebaseUID: { type: String, required: true, unique: true }, // Store Firebase UID separately
+  name: String,
+  email: String,
+  photo: String,
+  gender: String,
+  dob: Date,
+});
+
 
 export interface NewUserRequestBody {
   name: string;

@@ -8,61 +8,46 @@ import ErrorHandler from "../utils/utility-class.js";
 
 export const myOrders = TryCatch(async (req, res, next) => {
   const { id: user } = req.query;
-
   const key = `my-orders-${user}`;
 
-  let orders;
+  let orders = (await redis.get(key)) ? JSON.parse(await redis.get(key)) : null;
 
-  orders = await redis.get(key);
-
-  if (orders) orders = JSON.parse(orders);
-  else {
+  if (!orders) {
     orders = await Order.find({ user });
-    await redis.setex(key, redisTTL, JSON.stringify(orders));
+    redis.setex(key, redisTTL, JSON.stringify(orders)); // Async to avoid blocking
   }
-  return res.status(200).json({
-    success: true,
-    orders,
-  });
+
+  return res.status(200).json({ success: true, orders });
 });
 
 export const allOrders = TryCatch(async (req, res, next) => {
-  const key = `all-orders`;
+  const key = "all-orders";
 
-  let orders;
+  let orders = (await redis.get(key)) ? JSON.parse(await redis.get(key)) : null;
 
-  orders = await redis.get(key);
-
-  if (orders) orders = JSON.parse(orders);
-  else {
+  if (!orders) {
     orders = await Order.find().populate("user", "name");
-    await redis.setex(key, redisTTL, JSON.stringify(orders));
+    redis.setex(key, redisTTL, JSON.stringify(orders)); // Async to avoid blocking
   }
-  return res.status(200).json({
-    success: true,
-    orders,
-  });
+
+  return res.status(200).json({ success: true, orders });
 });
 
 export const getSingleOrder = TryCatch(async (req, res, next) => {
   const { id } = req.params;
   const key = `order-${id}`;
 
-  let order;
-  order = await redis.get(key);
+  let order = (await redis.get(key)) ? JSON.parse(await redis.get(key)) : null;
 
-  if (order) order = JSON.parse(order);
-  else {
+  if (!order) {
     order = await Order.findById(id).populate("user", "name");
 
     if (!order) return next(new ErrorHandler("Order Not Found", 404));
 
-    await redis.setex(key, redisTTL, JSON.stringify(order));
+    redis.setex(key, redisTTL, JSON.stringify(order)); // Async to avoid blocking
   }
-  return res.status(200).json({
-    success: true,
-    order,
-  });
+
+  return res.status(200).json({ success: true, order });
 });
 
 export const newOrder = TryCatch(
@@ -81,6 +66,9 @@ export const newOrder = TryCatch(
     if (!shippingInfo || !orderItems || !user || !subtotal || !tax || !total)
       return next(new ErrorHandler("Please Enter All Fields", 400));
 
+    if (!Array.isArray(orderItems) || orderItems.length === 0)
+      return next(new ErrorHandler("Order must contain at least one item", 400));
+
     const order = await Order.create({
       shippingInfo,
       orderItems,
@@ -92,20 +80,18 @@ export const newOrder = TryCatch(
       total,
     });
 
-    await reduceStock(orderItems);
+    await Promise.all([
+      reduceStock(orderItems),
+      invalidateCache({
+        product: true,
+        order: true,
+        admin: true,
+        userId: user,
+        productId: order.orderItems.map((i) => String(i.productId)),
+      }),
+    ]);
 
-    await invalidateCache({
-      product: true,
-      order: true,
-      admin: true,
-      userId: user,
-      productId: order.orderItems.map((i) => String(i.productId)),
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: "Order Placed Successfully",
-    });
+    return res.status(201).json({ success: true, message: "Order Placed Successfully" });
   }
 );
 
@@ -113,21 +99,14 @@ export const processOrder = TryCatch(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id);
-
   if (!order) return next(new ErrorHandler("Order Not Found", 404));
 
-  switch (order.status) {
-    case "Processing":
-      order.status = "Shipped";
-      break;
-    case "Shipped":
-      order.status = "Delivered";
-      break;
-    default:
-      order.status = "Delivered";
-      break;
-  }
+  const statusTransitions: Record<string, string> = {
+    Processing: "Shipped",
+    Shipped: "Delivered",
+  };
 
+  order.status = statusTransitions[order.status] || order.status; // Prevent unintended changes
   await order.save();
 
   await invalidateCache({
@@ -138,10 +117,7 @@ export const processOrder = TryCatch(async (req, res, next) => {
     orderId: String(order._id),
   });
 
-  return res.status(200).json({
-    success: true,
-    message: "Order Processed Successfully",
-  });
+  return res.status(200).json({ success: true, message: "Order Processed Successfully" });
 });
 
 export const deleteOrder = TryCatch(async (req, res, next) => {
@@ -160,8 +136,5 @@ export const deleteOrder = TryCatch(async (req, res, next) => {
     orderId: String(order._id),
   });
 
-  return res.status(200).json({
-    success: true,
-    message: "Order Deleted Successfully",
-  });
+  return res.status(200).json({ success: true, message: "Order Deleted Successfully" });
 });

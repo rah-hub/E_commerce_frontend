@@ -12,7 +12,7 @@ export const newUser = TryCatch(
   ) => {
     const { name, email, photo, gender, _id, dob } = req.body;
 
-    let user = await User.findById(_id);
+    let user = await User.findOne({ firebaseUID: _id }); // Find by Firebase UID
 
     if (user)
       return res.status(200).json({
@@ -24,11 +24,11 @@ export const newUser = TryCatch(
       return next(new ErrorHandler("Please add all fields", 400));
 
     user = await User.create({
+      firebaseUID: _id, // Store Firebase UID
       name,
       email,
       photo,
       gender,
-      _id,
       dob: new Date(dob),
     });
 
@@ -38,6 +38,7 @@ export const newUser = TryCatch(
     });
   }
 );
+
 
 export const getAllUsers = TryCatch(async (req, res, next) => {
   const users = await User.find({});
@@ -60,11 +61,12 @@ export const getUser = TryCatch(async (req, res, next) => {
   });
 });
 
+
 export const deleteUser = TryCatch(async (req, res, next) => {
   const id = req.params.id;
-  const user = await User.findById(id);
+  const user = await User.findOne({ firebaseUID: id }); // Find by Firebase UID
 
-  if (!user) return next(new ErrorHandler("Invalid Id", 400));
+  if (!user) return next(new ErrorHandler("User not found", 404));
 
   await user.deleteOne();
 
@@ -73,3 +75,4 @@ export const deleteUser = TryCatch(async (req, res, next) => {
     message: "User Deleted Successfully",
   });
 });
+
